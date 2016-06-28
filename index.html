@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="UTF-8">
+    <title>Ruobin.GitHub.io by ruobin</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
+    <link href='https://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
+  </head>
+  <body>
+    <section class="page-header">
+      <h1 class="project-name">Ruobin.GitHub.io</h1>
+      <h2 class="project-tagline"></h2>
+    </section>
+
+    <section class="main-content">
+      <h3>
+<a id="关于gpuimage" class="anchor" href="#%E5%85%B3%E4%BA%8Egpuimage" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>关于GPUImage</h3>
+
+<p>这里直接引用官方描述：
+The GPUImage framework is a BSD-licensed iOS library that lets you apply GPU-accelerated filters and other effects to images, live camera video, and movies. In comparison to Core Image (part of iOS 5.0), GPUImage allows you to write your own custom filters, supports deployment to iOS 4.0, and has a simpler interface. However, it currently lacks some of the more advanced features of Core Image, such as facial detection.
+<a href="https://github.com/BradLarson/GPUImage">项目地址：https://github.com/BradLarson/GPUImage</a></p>
+
+<h3>
+<a id="滤镜基本原理" class="anchor" href="#%E6%BB%A4%E9%95%9C%E5%9F%BA%E6%9C%AC%E5%8E%9F%E7%90%86" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>滤镜基本原理</h3>
+
+<p>滤镜处理的原理就是把静态图片或者视频的每一帧进行图形变换再显示出来。它的本质就是像素点的坐标和颜色变化，这点从GPUImage项目中滤镜的源代码就可以了解到。
+例如下面就是一个名为DarkenBlend的滤镜代码：</p>
+
+<pre><code>
+NSString *const kGPUImageDarkenBlendFragmentShaderString = SHADER_STRING
+(
+ varying highp vec2 textureCoordinate;
+ varying highp vec2 textureCoordinate2;
+
+ uniform sampler2D inputImageTexture;
+ uniform sampler2D inputImageTexture2;
+
+ void main()
+ {
+    lowp vec4 base = texture2D(inputImageTexture, textureCoordinate);
+    lowp vec4 overlayer = texture2D(inputImageTexture2, textureCoordinate2);
+
+    gl_FragColor = vec4(min(overlayer.rgb * base.a, base.rgb * overlayer.a) + overlayer.rgb * (1.0 - base.a) + base.rgb * (1.0 - overlayer.a), 1.0);
+ }
+);
+</code></pre>
+
+<p>GPUImage的最新版本已经内置了125个滤镜。也支持编写自定义滤镜（custom filter）。</p>
+
+<h3>
+<a id="图像处理流程" class="anchor" href="#%E5%9B%BE%E5%83%8F%E5%A4%84%E7%90%86%E6%B5%81%E7%A8%8B" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>图像处理流程</h3>
+
+<p>数据源需要实现GPUImageOutput接口，而后续各个环节（包括最后处理输出结果）的对象都要实现GPUImageInput接口。每个处理环节都是从上一个环节获取图像数据，进行处理后再将结果传递给下一个。下游的处理对象称为上一步的target。使用addTarget:方法为处理链路添加每个环节的对象。一个常见的链条如下：
+数据源（例如GPUImageVideoCamera或者GPUImageMovie）-&gt;各类filter-&gt;GPUImageView
+如果需要将结果输出到文件，只要把上述流程中最末的GPUImageView改为一个GPUImageMovieWriter即可。所以滤镜的添加和替换，以及输出结果都十分简单方便。</p>
+
+<p>附一张GPUImage的结构图
+<img src="http://img2.tbcdn.cn/L1/461/1/73a00e197cbbe473d18e89629a1f6e19c94d07a8.png" alt="GPUImage结构图"></p>
+
+<h3>
+<a id="接入app" class="anchor" href="#%E6%8E%A5%E5%85%A5app" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>接入app</h3>
+
+<p>将滤镜接入app非常简单，只要创建一个GPUImageMovie，一个具体的GPUImageFilter和一个用来显示的GPUImageView，然后按处理链条的上下游关系把它们用addTarget串起来。
+下面附上我的app里面的调用代码（预览视频）：</p>
+
+<pre><code>
+    _movie = [[GPUImageMovie alloc] initWithURL:url];
+    _movie.shouldRepeat = YES;
+    _movie.playAtActualSpeed = YES;
+    _movie.playSound = YES;
+    _movie.delegate = self;
+    
+    GPUImageMissEtikateFilter *filter = [[GPUImageMissEtikateFilter alloc] init];//胶片效果
+    [_movie addTarget:filter];
+    [filter addTarget:self.gpuImageView];
+    
+    [_movie startProcessing];
+</code></pre>
+
+<p>然后就是一些重要的参数设置：
+playAtActualSpeed
+控制GPUImageView预览视频时的速度是否要保持真实的速度。如果设为NO，则会将视频的所有帧无间隔渲染，导致速度非常快。设为YES，则会根据视频本身时长计算出每帧的时间间隔，然后每渲染一帧，就sleep一个时间间隔，从而达到正常的播放速度。</p>
+
+<p>shouldRepeat
+控制视频是否循环播放。</p>
+
+<p>当你不想预览，而是想将处理过的结果输出到文件时，步骤也类似，只是不再需要创建GPUImageView，而是需要一个GPUImageMovieWriter：</p>
+
+<pre><code>
+    _writer = [[GPUImageMovieWriter alloc] initWithMovieURL:filtedMovieURL size:CGSizeMake(480, 640) fileType:(NSString *)kUTTypeMPEG4 outputSettings:outputSettings];
+    _writer.encodingLiveVideo = NO;
+    _writer.shouldPassthroughAudio = NO;
+    _movie.audioEncodingTarget = _writer;
+    _movie.playAtActualSpeed = NO;
+    [_movie addTarget:_curFilter];
+    [_curFilter addTarget:_writer];
+    [_movie enableSynchronizedEncodingUsingMovieWriter:_writer];
+    [_writer startRecording];
+    [_movie startProcessing];
+</code></pre>
+
+<h3>
+<a id="一些局限和踩过的坑" class="anchor" href="#%E4%B8%80%E4%BA%9B%E5%B1%80%E9%99%90%E5%92%8C%E8%B8%A9%E8%BF%87%E7%9A%84%E5%9D%91" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>一些局限和踩过的坑</h3>
+
+<p>1.预览时不支持播放声音
+视频结果输出到GPUImageView预览时不支持播放声音，所以要自行添加声音播放：
+自行创建了一个播放器对象</p>
+
+<pre><code>
+- (void) setupSound
+{
+    if (theAudioPlayer != nil)
+    {
+        [theAudioPlayer pause];
+        [theAudioPlayer seekToTime:kCMTimeZero];
+        theAudioPlayer = nil;
+    }
+    theAudioPlayer = [[AVPlayer alloc] initWithURL:self.url];
+}
+</code></pre>
+
+<p>跟GPUImageView的图像同步播放</p>
+
+<pre><code>
+    if (self.playSound &amp;&amp; hasAudioTrack)
+    {
+        [theAudioPlayer seekToTime:kCMTimeZero];
+        [theAudioPlayer play];
+    }
+</code></pre>
+
+<p>由于GPUImageMovie里面没有在这几个重要位置提供回调，所以只能在源代码中直接添加，这也导致了对源码的侵入，不利于以后版本升级。</p>
+
+<p>2.GPUImageView预览视频并循环播放时，当播放重新开始时，有大约50%的概率会有红屏闪一下，目前还未定位到原因</p>
+
+<p>3.GPUImageView预览视频时，app切到后台会crash，所以要特别处理下，在willDisappear和handleApplicationWillEnterBackgroundNotify这两个时机都要暂停滤镜处理：</p>
+
+<pre><code>
+    if (_movie) {
+        [_movie endProcessing];
+        [_movie removeAllTargets];
+        _movie = nil;
+    }
+</code></pre>
+
+<p>对应的，在willAppear和handleApplicationWillEnterForegroundNotify这两个时机要重启处理：</p>
+
+<pre><code>
+    if (!_movie) {
+        _movie = [[GPUImageMovie alloc] initWithURL:url];
+    }
+    
+    _movie.shouldRepeat = YES;
+    _movie.playAtActualSpeed = YES;
+    _movie.playSound = YES;
+    _movie.delegate = self;
+
+    [_movie addTarget:_curFilter];
+    [_curFilter addTarget:self.gpuImageView];
+    
+    [_movie startProcessing];
+</code></pre>
+
+      <footer class="site-footer">
+
+        <span class="site-footer-credits">This page was generated by <a href="https://pages.github.com">GitHub Pages</a> using the <a href="https://github.com/jasonlong/cayman-theme">Cayman theme</a> by <a href="https://twitter.com/jasonlong">Jason Long</a>.</span>
+      </footer>
+
+    </section>
+
+  
+  </body>
+</html>
