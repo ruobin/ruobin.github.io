@@ -1,0 +1,1 @@
+cp -rf _site /var/www/html/ghp/
